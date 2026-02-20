@@ -15,7 +15,7 @@ HATNOTE_CATEGORY = "Category:Hatnote templates"
 def get_required_env(name):
     value = os.environ.get(name)
     if not value or not value.strip():
-        print(f"[FATAL] Required environment variable '{name}' is missing.")
+        print(f"[FATAL] Missing required environment variable: {name}")
         sys.exit(1)
     return value.strip()
 
@@ -25,7 +25,7 @@ def get_int_env(name, default):
         try:
             return int(value.strip())
         except ValueError:
-            print(f"[WARNING] Invalid integer for {name}. Using default {default}.")
+            print(f"[WARNING] Invalid integer for {name}, using default {default}")
     return default
 
 def get_bool_env(name, default=True):
@@ -34,13 +34,24 @@ def get_bool_env(name, default=True):
         return value.strip().lower() in ["true", "1", "yes"]
     return default
 
+
 BOT_USER = get_required_env("BOT_USER")
 BOT_PASSWORD = get_required_env("BOT_PASSWORD")
 
 MAX_ARTICLES = get_int_env("MAX_ARTICLES", 20)
 DRY_RUN = get_bool_env("DRY_RUN", True)
 
+# ==============================
+# Session Setup (IMPORTANT FIX)
+# ==============================
+
 session = requests.Session()
+
+# Wikimedia requires descriptive User-Agent
+session.headers.update({
+    "User-Agent": f"{BOT_USER} (TestWiki hatnote cleanup bot; GitHub Actions)"
+})
+
 csrf_token = None
 
 
@@ -54,8 +65,8 @@ def api_get(params):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"[ERROR] API GET failed: {e}")
-        return None
+        print("[ERROR] API GET failed:", e)
+        sys.exit(1)
 
 def api_post(data):
     try:
@@ -63,8 +74,8 @@ def api_post(data):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"[ERROR] API POST failed: {e}")
-        return None
+        print("[ERROR] API POST failed:", e)
+        sys.exit(1)
 
 
 # ==============================
@@ -80,8 +91,6 @@ def login():
         "type": "login",
         "format": "json"
     })
-    if not token_data:
-        sys.exit(1)
 
     login_token = token_data["query"]["tokens"]["logintoken"]
 
@@ -93,9 +102,8 @@ def login():
         "format": "json"
     })
 
-    if not login_result or login_result.get("login", {}).get("result") != "Success":
-        print("[FATAL] Login failed.")
-        print(login_result)
+    if login_result.get("login", {}).get("result") != "Success":
+        print("[FATAL] Login failed:", login_result)
         sys.exit(1)
 
     csrf_data = api_get({
@@ -109,12 +117,12 @@ def login():
 
 
 # ==============================
-# Category Handling
+# Category Fetching (No subcats)
 # ==============================
 
 def get_category_members(category, namespace):
     members = []
-    cmcontinue = ""
+    cmcontinue = None
 
     while True:
         params = {
@@ -130,8 +138,6 @@ def get_category_members(category, namespace):
             params["cmcontinue"] = cmcontinue
 
         data = api_get(params)
-        if not data:
-            break
 
         members.extend([m["title"] for m in data["query"]["categorymembers"]])
 
@@ -144,7 +150,7 @@ def get_category_members(category, namespace):
 
 
 # ==============================
-# Page Utilities
+# Page Helpers
 # ==============================
 
 def page_exists(title):
@@ -153,8 +159,6 @@ def page_exists(title):
         "titles": title,
         "format": "json"
     })
-    if not data:
-        return False
 
     page = next(iter(data["query"]["pages"].values()))
     return "missing" not in page
@@ -169,12 +173,9 @@ def get_page_text(title):
         "format": "json"
     })
 
-    if not data:
-        return ""
-
     page = next(iter(data["query"]["pages"].values()))
     if "revisions" not in page:
-        return ""
+        return None
 
     return page["revisions"][0]["*"]
 
@@ -194,15 +195,14 @@ def edit_page(title, text, summary):
         "bot": True
     })
 
-    if result and result.get("edit", {}).get("result") == "Success":
+    if result.get("edit", {}).get("result") == "Success":
         print(f"[+] Edited {title}")
     else:
-        print(f"[ERROR] Failed editing {title}")
-        print(result)
+        print("[ERROR] Edit failed:", result)
 
 
 # ==============================
-# Main Logic
+# Main
 # ==============================
 
 def main():
@@ -241,21 +241,22 @@ def main():
                     target = str(link.title).split("|")[0]
 
                     if not page_exists(target):
-                        print(f"    [-] Removing template '{name}' (red link: {target})")
+                        print(f"    [-] Removing '{name}' (red link: {target})")
                         wikicode.remove(template)
                         modified = True
                         break
 
         if modified:
-            edit_page(page_title, str(wikicode),
-                      "Bot: Removed hatnote pointing to nonexistent page")
+            edit_page(
+                page_title,
+                str(wikicode),
+                "Bot: Removed hatnote pointing to nonexistent page"
+            )
             edits_made += 1
 
-    print("\n==============================")
-    print(f"Run complete.")
+    print("\nRun complete.")
     print(f"Pages processed: {len(problem_pages)}")
     print(f"Edits made: {edits_made}")
-    print("==============================")
 
 
 if __name__ == "__main__":
