@@ -1,151 +1,262 @@
 import requests
 import mwparserfromhell
 import os
+import sys
 
 API_URL = "https://test.wikipedia.org/w/api.php"
-
-# Environment variables for GitHub Actions or local testing
-BOT_USER = os.environ.get("BOT_USER")
-BOT_PASSWORD = os.environ.get("BOT_PASSWORD")
 
 PROBLEM_CATEGORY = "Category:Articles with hatnote templates targeting a nonexistent page"
 HATNOTE_CATEGORY = "Category:Hatnote templates"
 
-MAX_ARTICLES = int(os.environ.get("MAX_ARTICLES", 20))
-DRY_RUN = os.environ.get("DRY_RUN", "True").lower() in ["true", "1", "yes"]
+# ==============================
+# Environment Handling
+# ==============================
+
+def get_required_env(name):
+    value = os.environ.get(name)
+    if not value or not value.strip():
+        print(f"[FATAL] Required environment variable '{name}' is missing.")
+        sys.exit(1)
+    return value.strip()
+
+def get_int_env(name, default):
+    value = os.environ.get(name)
+    if value and value.strip():
+        try:
+            return int(value.strip())
+        except ValueError:
+            print(f"[WARNING] Invalid integer for {name}. Using default {default}.")
+    return default
+
+def get_bool_env(name, default=True):
+    value = os.environ.get(name)
+    if value and value.strip():
+        return value.strip().lower() in ["true", "1", "yes"]
+    return default
+
+BOT_USER = get_required_env("BOT_USER")
+BOT_PASSWORD = get_required_env("BOT_PASSWORD")
+
+MAX_ARTICLES = get_int_env("MAX_ARTICLES", 20)
+DRY_RUN = get_bool_env("DRY_RUN", True)
 
 session = requests.Session()
+csrf_token = None
+
+
+# ==============================
+# API Helpers
+# ==============================
+
+def api_get(params):
+    try:
+        r = session.get(API_URL, params=params, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"[ERROR] API GET failed: {e}")
+        return None
+
+def api_post(data):
+    try:
+        r = session.post(API_URL, data=data, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"[ERROR] API POST failed: {e}")
+        return None
+
+
+# ==============================
+# Login
+# ==============================
 
 def login():
-    r = session.get(API_URL, params={
+    print("[~] Logging in...")
+
+    token_data = api_get({
         "action": "query",
         "meta": "tokens",
         "type": "login",
         "format": "json"
-    }).json()
-    login_token = r["query"]["tokens"]["logintoken"]
+    })
+    if not token_data:
+        sys.exit(1)
 
-    r2 = session.post(API_URL, data={
+    login_token = token_data["query"]["tokens"]["logintoken"]
+
+    login_result = api_post({
         "action": "login",
         "lgname": BOT_USER,
         "lgpassword": BOT_PASSWORD,
         "lgtoken": login_token,
         "format": "json"
-    }).json()
-    if r2.get("login", {}).get("result") != "Success":
-        raise Exception("Login failed: " + str(r2))
-    print("[+] Logged in successfully.")
+    })
 
-    r3 = session.get(API_URL, params={"action": "query", "meta": "tokens", "format": "json"}).json()
-    return r3["query"]["tokens"]["csrftoken"]
+    if not login_result or login_result.get("login", {}).get("result") != "Success":
+        print("[FATAL] Login failed.")
+        print(login_result)
+        sys.exit(1)
 
-def get_category_members(category, namespace=0):
-    """Return list of page titles in a category, ignoring subcategories."""
+    csrf_data = api_get({
+        "action": "query",
+        "meta": "tokens",
+        "format": "json"
+    })
+
+    print("[+] Login successful.")
+    return csrf_data["query"]["tokens"]["csrftoken"]
+
+
+# ==============================
+# Category Handling
+# ==============================
+
+def get_category_members(category, namespace):
     members = []
     cmcontinue = ""
+
     while True:
         params = {
             "action": "query",
             "list": "categorymembers",
             "cmtitle": category,
             "cmlimit": "max",
-            "cmnamespace": namespace,  # 0=articles, 10=templates
+            "cmnamespace": namespace,
             "format": "json"
         }
+
         if cmcontinue:
             params["cmcontinue"] = cmcontinue
 
-        r = session.get(API_URL, params=params).json()
-        members.extend([m["title"] for m in r["query"]["categorymembers"]])
-        if "continue" in r:
-            cmcontinue = r["continue"]["cmcontinue"]
+        data = api_get(params)
+        if not data:
+            break
+
+        members.extend([m["title"] for m in data["query"]["categorymembers"]])
+
+        if "continue" in data:
+            cmcontinue = data["continue"]["cmcontinue"]
         else:
             break
+
     return members
 
+
+# ==============================
+# Page Utilities
+# ==============================
+
 def page_exists(title):
-    r = session.get(API_URL, params={
+    data = api_get({
         "action": "query",
         "titles": title,
         "format": "json"
-    }).json()
-    page = next(iter(r["query"]["pages"].values()))
+    })
+    if not data:
+        return False
+
+    page = next(iter(data["query"]["pages"].values()))
     return "missing" not in page
 
+
 def get_page_text(title):
-    r = session.get(API_URL, params={
+    data = api_get({
         "action": "query",
         "prop": "revisions",
         "titles": title,
         "rvprop": "content",
         "format": "json"
-    }).json()
-    page = next(iter(r["query"]["pages"].values()))
-    return page["revisions"][0]["*"] if "revisions" in page else ""
+    })
 
-def edit_page(title, new_text, summary):
+    if not data:
+        return ""
+
+    page = next(iter(data["query"]["pages"].values()))
+    if "revisions" not in page:
+        return ""
+
+    return page["revisions"][0]["*"]
+
+
+def edit_page(title, text, summary):
     if DRY_RUN:
-        print(f"[DRY RUN] Would save {title}: {summary}")
+        print(f"[DRY RUN] Would edit: {title}")
         return
-    r = session.post(API_URL, data={
+
+    result = api_post({
         "action": "edit",
         "title": title,
-        "text": new_text,
+        "text": text,
         "token": csrf_token,
         "format": "json",
         "summary": summary,
         "bot": True
-    }).json()
-    if "edit" in r and r["edit"].get("result") == "Success":
+    })
+
+    if result and result.get("edit", {}).get("result") == "Success":
         print(f"[+] Edited {title}")
     else:
-        print(f"[!] Failed to edit {title}: {r}")
+        print(f"[ERROR] Failed editing {title}")
+        print(result)
+
+
+# ==============================
+# Main Logic
+# ==============================
 
 def main():
     global csrf_token
     csrf_token = login()
 
-    # Load hatnote templates (namespace 10)
     print("[~] Loading hatnote templates...")
     hatnote_templates = get_category_members(HATNOTE_CATEGORY, namespace=10)
     hatnote_templates = [t.replace("Template:", "") for t in hatnote_templates]
-    print(f"[+] Loaded {len(hatnote_templates)} hatnote templates.")
+    print(f"[+] Loaded {len(hatnote_templates)} templates.")
 
-    # Load problem articles (namespace 0)
     print("[~] Loading problem pages...")
     problem_pages = get_category_members(PROBLEM_CATEGORY, namespace=0)
-    print(f"[+] Found {len(problem_pages)} problem pages.")
+    print(f"[+] Found {len(problem_pages)} pages.")
 
-    # Apply max articles limit
-    if MAX_ARTICLES is not None:
-        problem_pages = problem_pages[:MAX_ARTICLES]
-        print(f"[+] Limiting to {len(problem_pages)} articles for this run.")
+    problem_pages = problem_pages[:MAX_ARTICLES]
+    print(f"[~] Processing {len(problem_pages)} pages (limit={MAX_ARTICLES})")
 
-    # Process each article
+    edits_made = 0
+
     for page_title in problem_pages:
-        print(f"\n[~] Processing {page_title}")
+        print(f"\n[~] Checking {page_title}")
+
         text = get_page_text(page_title)
+        if not text:
+            continue
+
         wikicode = mwparserfromhell.parse(text)
         modified = False
 
         for template in wikicode.filter_templates():
             name = template.name.strip()
+
             if name in hatnote_templates:
-                links = template.filter_wikilinks()
-                remove_template = False
-                for link in links:
-                    target_title = str(link.title).split("|")[0]
-                    if not page_exists(target_title):
-                        remove_template = True
-                        print(f"    [-] Template {name} points to missing page {target_title}")
+                for link in template.filter_wikilinks():
+                    target = str(link.title).split("|")[0]
+
+                    if not page_exists(target):
+                        print(f"    [-] Removing template '{name}' (red link: {target})")
+                        wikicode.remove(template)
+                        modified = True
                         break
-                if remove_template:
-                    wikicode.remove(template)
-                    modified = True
 
         if modified:
-            edit_page(page_title, str(wikicode), "Bot: Removed hatnote pointing to nonexistent page")
+            edit_page(page_title, str(wikicode),
+                      "Bot: Removed hatnote pointing to nonexistent page")
+            edits_made += 1
 
-# Run main() only if executed directly
+    print("\n==============================")
+    print(f"Run complete.")
+    print(f"Pages processed: {len(problem_pages)}")
+    print(f"Edits made: {edits_made}")
+    print("==============================")
+
+
 if __name__ == "__main__":
     main()
