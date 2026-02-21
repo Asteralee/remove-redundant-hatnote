@@ -7,8 +7,8 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     env:
-      USERNAME: ${{ secrets.WIKI_USERNAME }}
-      PASSWORD: ${{ secrets.WIKI_PASSWORD }}
+      USERNAME: ${{ secrets.BOT_USER }}
+      PASSWORD: ${{ secrets.BOT_PASSWORD }}
       MAX_ARTICLES: 15
       DRY_RUN: false
     steps:
