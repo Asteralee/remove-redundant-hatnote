@@ -1,20 +1,20 @@
 import os
 import requests
 import mwparserfromhell
-import pywikibot
 
-API_URL = "https://test.wikipedia.org/w/api.php"
-USERNAME = os.getenv("BOT_USER")
-PASSWORD = os.getenv("BOT_PASSWORD")
+# --- Configuration from environment variables ---
+API_URL = "https://simple.wikipedia.org/w/api.php"
+BOT_USER = os.getenv("BOT_USER")
+BOT_PASSWORD = os.getenv("BOT_PASSWORD")
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
 DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
 HEADERS = {
-    "User-Agent": "SimpleWikiHatnoteBot/1.0"
+    "User-Agent": "SimpleWikiHatnoteBot/1.0 (https://github.com/yourname/simplewiki-hatnote-cleanup-bot)"
 }
 
-if not USERNAME or not PASSWORD:
-    raise Exception("BOT_USER and BOT_PASSWORD must be set as environment variables.")
+if not BOT_USER or not BOT_PASSWORD:
+    raise ValueError("BOT_USER and BOT_PASSWORD must be set as environment variables.")
 
 # --- Login functions ---
 def login_and_get_session(username, password):
@@ -44,7 +44,7 @@ def login_and_get_session(username, password):
     if r2.json()['login']['result'] != 'Success':
         raise Exception("Login failed!")
 
-    # Step 3: verify login
+    # Step 3: Verify login
     r3 = session.get(API_URL, params={
         'action': 'query',
         'meta': 'userinfo',
@@ -67,9 +67,6 @@ def get_csrf_token(session):
 
 # --- Hatnote removal logic ---
 class HatnoteCleaner:
-    def __init__(self, site):
-        self.site = site
-
     def remove_hatnotes(self, wikitext):
         parsed = mwparserfromhell.parse(wikitext)
         removed_any = False
@@ -84,44 +81,56 @@ class HatnoteCleaner:
 
 # --- Main bot workflow ---
 def main():
-    # Setup Pywikibot site
-    site = pywikibot.Site('test', 'wikipedia')
-    cleaner = HatnoteCleaner(site)
-    
-    # Login via raw API
-    session = login_and_get_session(USERNAME, PASSWORD)
+    cleaner = HatnoteCleaner()
+    session = login_and_get_session(BOT_USER, BOT_PASSWORD)
     csrf_token = get_csrf_token(session)
 
-    # Fetch articles from tracking category
-    category = pywikibot.Category(
-        site,
-        "Category:Articles with hatnote templates targeting a nonexistent page"
-    )
-    count = 0
+    # Fetch pages from category
+    r = session.get(API_URL, params={
+        "action": "query",
+        "list": "categorymembers",
+        "cmtitle": "Category:Articles with hatnote templates targeting a nonexistent page",
+        "cmlimit": MAX_ARTICLES,
+        "format": "json"
+    })
+    r.raise_for_status()
+    pages = r.json()['query']['categorymembers']
 
-    for page in category.articles():
+    count = 0
+    for page in pages:
         if count >= MAX_ARTICLES:
             break
 
-        new_text, removed = cleaner.remove_hatnotes(page.text)
+        # Fetch page content
+        r_page = session.get(API_URL, params={
+            "action": "query",
+            "prop": "revisions",
+            "rvprop": "content",
+            "titles": page['title'],
+            "format": "json"
+        })
+        r_page.raise_for_status()
+        page_data = next(iter(r_page.json()['query']['pages'].values()))
+        wikitext = page_data['revisions'][0]['*']
+
+        new_text, removed = cleaner.remove_hatnotes(wikitext)
         if removed:
             if DRY_RUN:
-                print(f"[DRY RUN] Would edit: {page.title()}")
+                print(f"[DRY RUN] Would edit: {page['title']}")
             else:
-                # Edit using raw API
                 response = session.post(API_URL, data={
                     "action": "edit",
-                    "title": page.title(),
+                    "title": page['title'],
                     "text": new_text,
                     "token": csrf_token,
-                    "summary": "Bot - Removing redlinked hatnote template ([https://en.wikipedia.org/wiki/Wikipedia:Hatnote#Rules read more!])",
+                    "summary": "Bot - Removing redlinked hatnote template ([[Help:Hatnotes|More info]])",
                     "format": "json"
                 })
                 resp_json = response.json()
                 if 'error' in resp_json:
-                    print(f"Error editing {page.title()}: {resp_json['error']}")
+                    print(f"Error editing {page['title']}: {resp_json['error']}")
                 else:
-                    print(f"Edited: {page.title()}")
+                    print(f"Edited: {page['title']}")
             count += 1
 
 if __name__ == "__main__":
