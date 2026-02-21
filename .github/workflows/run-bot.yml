@@ -7,8 +7,8 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     env:
-      USERNAME: ${{ secrets.BOT_USER }}
-      PASSWORD: ${{ secrets.BOT_PASSWORD }}
+      BOT_USER: ${{ secrets.BOT_USER }}
+      BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
       MAX_ARTICLES: 15
       DRY_RUN: false
     steps:
