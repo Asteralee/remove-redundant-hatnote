@@ -10,7 +10,7 @@ MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
 DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
 HEADERS = {
-    "User-Agent": "SimpleWikiHatnoteBot/1.0 (https://github.com/yourname/simplewiki-hatnote-cleanup-bot)"
+    "User-Agent": "SimpleWikiHatnoteBot/1.0"
 }
 
 if not USERNAME or not PASSWORD:
@@ -85,7 +85,7 @@ class HatnoteCleaner:
 # --- Main bot workflow ---
 def main():
     # Setup Pywikibot site
-    site = pywikibot.Site('simple', 'wikipedia')
+    site = pywikibot.Site('test', 'wikipedia')
     cleaner = HatnoteCleaner(site)
     
     # Login via raw API
