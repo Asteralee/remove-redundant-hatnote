@@ -4,7 +4,7 @@ import mwparserfromhell
 import pywikibot
 
 # --- Configuration from environment variables ---
-API_URL = "https://simple.wikipedia.org/w/api.php"
+API_URL = "https://test.wikipedia.org/w/api.php"
 USERNAME = os.getenv("USERNAME")
 PASSWORD = os.getenv("PASSWORD")
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
