@@ -3,7 +3,7 @@ import requests
 import mwparserfromhell
 
 # --- Configuration from environment variables ---
-API_URL = "https://simple.wikipedia.org/w/api.php"
+API_URL = "https://test.wikipedia.org/w/api.php"
 BOT_USER = os.getenv("BOT_USER")
 BOT_PASSWORD = os.getenv("BOT_PASSWORD")
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
