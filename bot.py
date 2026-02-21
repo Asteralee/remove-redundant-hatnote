@@ -15,7 +15,7 @@ HEADERS = {
 }
 
 if not USERNAME or not PASSWORD:
-    raise ValueError("USERNAME and PASSWORD must be set as environment variables.")
+    raise ValueError("BOT_USER and BOT_PASSWORD must be set as environment variables.")
 
 # --- Login functions ---
 def login_and_get_session(username, password):
