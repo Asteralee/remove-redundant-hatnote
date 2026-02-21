@@ -42,12 +42,10 @@ MAX_ARTICLES = get_int_env("MAX_ARTICLES", 20)
 DRY_RUN = get_bool_env("DRY_RUN", True)
 
 # ==============================
-# Session Setup (IMPORTANT FIX)
+# Session Setup (User-Agent FIX)
 # ==============================
 
 session = requests.Session()
-
-# Wikimedia requires descriptive User-Agent
 session.headers.update({
     "User-Agent": f"{BOT_USER} (TestWiki hatnote cleanup bot; GitHub Actions)"
 })
@@ -117,7 +115,7 @@ def login():
 
 
 # ==============================
-# Category Fetching (No subcats)
+# Category Fetching (No Subcats)
 # ==============================
 
 def get_category_members(category, namespace):
@@ -150,19 +148,8 @@ def get_category_members(category, namespace):
 
 
 # ==============================
-# Page Helpers
+# Page Utilities
 # ==============================
-
-def page_exists(title):
-    data = api_get({
-        "action": "query",
-        "titles": title,
-        "format": "json"
-    })
-
-    page = next(iter(data["query"]["pages"].values()))
-    return "missing" not in page
-
 
 def get_page_text(title):
     data = api_get({
@@ -202,6 +189,104 @@ def edit_page(title, text, summary):
 
 
 # ==============================
+# Batch Existence Check (FAST)
+# ==============================
+
+def get_pages_existence(titles):
+    existence = {}
+    batch_size = 50  # MediaWiki limit
+
+    for i in range(0, len(titles), batch_size):
+        batch = titles[i:i+batch_size]
+
+        data = api_get({
+            "action": "query",
+            "titles": "|".join(batch),
+            "format": "json"
+        })
+
+        pages = data["query"]["pages"]
+
+        for page in pages.values():
+            title = page["title"]
+            existence[title] = "missing" not in page
+
+    return existence
+
+
+# ==============================
+# Processing Logic (Optimized)
+# ==============================
+
+def process_pages(problem_pages, hatnote_templates):
+    edits_made = 0
+    existence_cache = {}
+
+    for page_title in problem_pages:
+        print(f"\n[~] Checking {page_title}")
+
+        text = get_page_text(page_title)
+        if not text:
+            continue
+
+        wikicode = mwparserfromhell.parse(text)
+        modified = False
+
+        targets_to_check = set()
+
+        # Collect all link targets first
+        for template in wikicode.filter_templates():
+            name = template.name.strip()
+
+            if name in hatnote_templates:
+                for param in template.params:
+                    param_code = mwparserfromhell.parse(str(param.value))
+                    for link in param_code.filter_wikilinks():
+                        target = str(link.title).split("|")[0]
+                        if target not in existence_cache:
+                            targets_to_check.add(target)
+
+        # Batch check new targets
+        if targets_to_check:
+            print(f"    [~] Checking {len(targets_to_check)} targets (batch)")
+            results = get_pages_existence(list(targets_to_check))
+            existence_cache.update(results)
+
+        # Remove broken hatnotes
+        for template in wikicode.filter_templates():
+            name = template.name.strip()
+
+            if name in hatnote_templates:
+                remove_template = False
+
+                for param in template.params:
+                    param_code = mwparserfromhell.parse(str(param.value))
+                    for link in param_code.filter_wikilinks():
+                        target = str(link.title).split("|")[0]
+
+                        if not existence_cache.get(target, False):
+                            print(f"    [-] Removing '{name}' (red link: {target})")
+                            remove_template = True
+                            break
+                    if remove_template:
+                        break
+
+                if remove_template:
+                    wikicode.remove(template)
+                    modified = True
+
+        if modified:
+            edit_page(
+                page_title,
+                str(wikicode),
+                "Bot: Removed hatnote pointing to nonexistent page"
+            )
+            edits_made += 1
+
+    return edits_made
+
+
+# ==============================
 # Main
 # ==============================
 
@@ -221,42 +306,13 @@ def main():
     problem_pages = problem_pages[:MAX_ARTICLES]
     print(f"[~] Processing {len(problem_pages)} pages (limit={MAX_ARTICLES})")
 
-    edits_made = 0
+    edits_made = process_pages(problem_pages, hatnote_templates)
 
-    for page_title in problem_pages:
-        print(f"\n[~] Checking {page_title}")
-
-        text = get_page_text(page_title)
-        if not text:
-            continue
-
-        wikicode = mwparserfromhell.parse(text)
-        modified = False
-
-        for template in wikicode.filter_templates():
-            name = template.name.strip()
-
-            if name in hatnote_templates:
-                for link in template.filter_wikilinks():
-                    target = str(link.title).split("|")[0]
-
-                    if not page_exists(target):
-                        print(f"    [-] Removing '{name}' (red link: {target})")
-                        wikicode.remove(template)
-                        modified = True
-                        break
-
-        if modified:
-            edit_page(
-                page_title,
-                str(wikicode),
-                "Bot: Removed hatnote pointing to nonexistent page"
-            )
-            edits_made += 1
-
-    print("\nRun complete.")
+    print("\n==============================")
+    print("Run complete.")
     print(f"Pages processed: {len(problem_pages)}")
     print(f"Edits made: {edits_made}")
+    print("==============================")
 
 
 if __name__ == "__main__":
