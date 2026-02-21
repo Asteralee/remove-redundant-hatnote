@@ -5,8 +5,8 @@ import pywikibot
 
 # --- Configuration from environment variables ---
 API_URL = "https://test.wikipedia.org/w/api.php"
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
+USERNAME = os.getenv("BOT_USER")
+PASSWORD = os.getenv("BOT_PASSWORD")
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
 DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
