@@ -3,7 +3,6 @@ import requests
 import mwparserfromhell
 import pywikibot
 
-# --- Configuration from environment variables ---
 API_URL = "https://test.wikipedia.org/w/api.php"
 USERNAME = os.getenv("BOT_USER")
 PASSWORD = os.getenv("BOT_PASSWORD")
@@ -15,7 +14,7 @@ HEADERS = {
 }
 
 if not USERNAME or not PASSWORD:
-    raise ValueError("BOT_USER and BOT_PASSWORD must be set as environment variables.")
+    raise Exception("BOT_USER and BOT_PASSWORD must be set as environment variables.")
 
 # --- Login functions ---
 def login_and_get_session(username, password):
