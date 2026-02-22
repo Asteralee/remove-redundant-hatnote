@@ -21,7 +21,8 @@ HATNOTE_WHITELIST = {
     "Main",
     "Main list",
     "Mainlist",
-    "See also2"
+    "See also2",
+    "Other uses"
 }
 
 if not BOT_USER or not BOT_PASSWORD:
