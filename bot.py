@@ -7,7 +7,7 @@ API_URL = "https://test.wikipedia.org/w/api.php"
 BOT_USER = os.getenv("BOT_USER")
 BOT_PASSWORD = os.getenv("BOT_PASSWORD")
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
-DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
+DRY_RUN = false
 
 HEADERS = {
     "User-Agent": "SimpleWikiHatnoteBot/1.0 (https://github.com/yourname/simplewiki-hatnote-cleanup-bot)"
