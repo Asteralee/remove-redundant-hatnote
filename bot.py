@@ -3,13 +3,26 @@ import requests
 import mwparserfromhell
 
 # --- Configuration ---
-API_URL = "https://test.wikipedia.org/w/api.php"
+API_URL = "https://test.wikipedia.org/w/api.php"  # change to simplewiki or testwiki
 BOT_USER = os.getenv("BOT_USER")
 BOT_PASSWORD = os.getenv("BOT_PASSWORD")
-MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 15))
+MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
 DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
-HEADERS = {"User-Agent": "SimpleWikiHatnoteBot/1.0"}
+HEADERS = {"User-Agent": "TestWikiHatnoteBot/1.0"}
+
+# --- Whitelist of templates to remove ---
+HATNOTE_WHITELIST = {
+    "About",
+    "About-distinguish",
+    "Further",
+    "For",
+    "Hatnote",
+    "Main",
+    "Main list",
+    "Mainlist",
+    "See also2"
+}
 
 if not BOT_USER or not BOT_PASSWORD:
     raise ValueError("BOT_USER and BOT_PASSWORD must be set as environment variables.")
@@ -18,7 +31,6 @@ if not BOT_USER or not BOT_PASSWORD:
 def login_and_get_session(username, password):
     session = requests.Session()
     session.headers.update(HEADERS)
-
     r1 = session.get(API_URL, params={'action':'query','meta':'tokens','type':'login','format':'json'})
     r1.raise_for_status()
     login_token = r1.json()['query']['tokens']['logintoken']
@@ -75,7 +87,7 @@ def edit_page(session, title, new_text, csrf_token):
         "title":title,
         "text":new_text,
         "token":csrf_token,
-        "summary":"Bot - Removing redlinked hatnote template ([[en:WP:HNR|read more!]])",
+        "summary":"Bot - Removing redlinked hatnote template ([[Help:Hatnotes|More info]])",
         "format":"json"
     })
     resp_json = response.json()
@@ -86,14 +98,16 @@ def edit_page(session, title, new_text, csrf_token):
 
 # --- HatnoteCleaner ---
 class HatnoteCleaner:
-    def __init__(self, template_names):
-        self.template_names = template_names
+    def __init__(self, whitelist):
+        self.whitelist = whitelist
 
-    def remove_hatnotes(self, wikitext):
+    def remove_hatnotes(self, wikitext, page_title):
         parsed = mwparserfromhell.parse(wikitext)
         removed_any = False
         for template in parsed.filter_templates():
-            if template.name.strip() in self.template_names:
+            name = template.name.strip()
+            if name in self.whitelist:
+                print(f"[DEBUG] Removing template '{name}' from page '{page_title}'")
                 parsed.remove(template)
                 removed_any = True
         return str(parsed), removed_any
@@ -107,26 +121,14 @@ def main():
     category_title = "Category:Articles with hatnote templates targeting a nonexistent page"
     pages = fetch_category_pages(session, category_title, MAX_ARTICLES)
 
-    # Step 1: Collect all template names in the pages
-    hatnote_names = set()
-    for page in pages:
-        wikitext = fetch_page_content(session, page['title'])
-        if not wikitext:
-            continue
-        parsed = mwparserfromhell.parse(wikitext)
-        for template in parsed.filter_templates():
-            hatnote_names.add(template.name.strip())
-    print(f"[INFO] Collected {len(hatnote_names)} templates to remove.")
+    cleaner = HatnoteCleaner(HATNOTE_WHITELIST)
 
-    cleaner = HatnoteCleaner(hatnote_names)
-
-    # Step 2: Remove templates from each page
     for page in pages:
         title = page['title']
         wikitext = fetch_page_content(session, title)
         if not wikitext:
             continue
-        new_text, removed = cleaner.remove_hatnotes(wikitext)
+        new_text, removed = cleaner.remove_hatnotes(wikitext, title)
         if removed:
             if DRY_RUN:
                 print(f"[DRY RUN] Would edit: {title}")
