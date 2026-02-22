@@ -6,7 +6,7 @@ import mwparserfromhell
 API_URL = "https://test.wikipedia.org/w/api.php"  # change to simplewiki or testwiki
 BOT_USER = os.getenv("BOT_USER")
 BOT_PASSWORD = os.getenv("BOT_PASSWORD")
-MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
+MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 15))
 DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
 HEADERS = {"User-Agent": "TestWikiHatnoteBot/1.0"}
@@ -87,7 +87,7 @@ def edit_page(session, title, new_text, csrf_token):
         "title":title,
         "text":new_text,
         "token":csrf_token,
-        "summary":"Bot - Removing redlinked hatnote template ([[Help:Hatnotes|More info]])",
+        "summary":"Bot - Removing redlinked hatnote template ([[en:WP:HNR|Read more!]])",
         "format":"json"
     })
     resp_json = response.json()
