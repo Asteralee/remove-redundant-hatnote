@@ -6,8 +6,8 @@ import mwparserfromhell
 API_URL = "https://test.wikipedia.org/w/api.php"
 BOT_USER = os.getenv("BOT_USER")
 BOT_PASSWORD = os.getenv("BOT_PASSWORD")
-MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 50))
-DRY_RUN = false
+MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", 15))
+DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
 
 HEADERS = {
     "User-Agent": "SimpleWikiHatnoteBot/1.0 (https://github.com/yourname/simplewiki-hatnote-cleanup-bot)"
@@ -52,7 +52,7 @@ def login_and_get_session(username, password):
     })
     r3.raise_for_status()
     logged_in_user = r3.json()['query']['userinfo']['name']
-    print(f"Logged in as {logged_in_user}")
+    print(f"[INFO] Logged in as {logged_in_user}")
 
     return session
 
@@ -81,6 +81,7 @@ class HatnoteCleaner:
 
 # --- Main bot workflow ---
 def main():
+    print(f"[INFO] Starting bot. DRY_RUN={DRY_RUN}, MAX_ARTICLES={MAX_ARTICLES}")
     cleaner = HatnoteCleaner()
     session = login_and_get_session(BOT_USER, BOT_PASSWORD)
     csrf_token = get_csrf_token(session)
@@ -95,43 +96,56 @@ def main():
     })
     r.raise_for_status()
     pages = r.json()['query']['categorymembers']
+    print(f"[INFO] Found {len(pages)} pages in category.")
 
     count = 0
     for page in pages:
         if count >= MAX_ARTICLES:
             break
+        title = page['title']
+        print(f"[INFO] Processing page: {title}")
 
         # Fetch page content
         r_page = session.get(API_URL, params={
             "action": "query",
             "prop": "revisions",
             "rvprop": "content",
-            "titles": page['title'],
+            "titles": title,
             "format": "json"
         })
         r_page.raise_for_status()
         page_data = next(iter(r_page.json()['query']['pages'].values()))
-        wikitext = page_data['revisions'][0]['*']
 
+        if 'revisions' not in page_data:
+            print(f"[WARN] No content for page: {title}, skipping.")
+            continue
+
+        wikitext = page_data['revisions'][0]['*']
         new_text, removed = cleaner.remove_hatnotes(wikitext)
+
         if removed:
+            print(f"[INFO] Hatnote template(s) found in {title} — will be removed.")
             if DRY_RUN:
-                print(f"[DRY RUN] Would edit: {page['title']}")
+                print(f"[DRY RUN] Would edit: {title}")
             else:
                 response = session.post(API_URL, data={
                     "action": "edit",
-                    "title": page['title'],
+                    "title": title,
                     "text": new_text,
                     "token": csrf_token,
-                    "summary": "Bot - Removing redlinked hatnote template ([[Help:Hatnotes|More info]])",
+                    "summary": "Bot - Removing redlinked hatnote template ([[en:WP:HNR|more info]])",
                     "format": "json"
                 })
                 resp_json = response.json()
                 if 'error' in resp_json:
-                    print(f"Error editing {page['title']}: {resp_json['error']}")
+                    print(f"[ERROR] Editing {title} failed: {resp_json['error']}")
                 else:
-                    print(f"Edited: {page['title']}")
+                    print(f"[SUCCESS] Edited: {title}")
             count += 1
+        else:
+            print(f"[INFO] No hatnotes found in {title}, skipping.")
+
+    print(f"[INFO] Done. Processed {count} page(s).")
 
 if __name__ == "__main__":
     main()
